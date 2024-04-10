@@ -1,0 +1,12 @@
+README
+Glad you've come this far!!
+Please note the following
+1. Two important documents have been provided. A a markdown script and a csv file
+2. Please do not move the ".csv" file from folder while trying to run "ML_cancer_remission.Rmd"
+3. To run "ML_cancer_remission", open and make sure the wroking directory is set by clicking on “Set Working Directory”>>>Then click on “To Source File Location”
+4. Run script, "install.packages" have been commented out, install as prompted/needed
+
+Note: R code was written on R version 4.3.2 (2023-10-31 ucrt) -- "Eye Holes"
+Copyright (C) 2023 The R Foundation for Statistical Computing
+Platform: x86_64-w64-mingw32/x64 (64-bit)
+Recent or latest versions of R and R studio are compatible.
