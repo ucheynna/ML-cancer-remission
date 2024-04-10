@@ -1,0 +1,402 @@
+---
+title: "Machine Learning"
+author: "Uche"
+date: "2024-02-06"
+output: html_document
+---
+
+## Machine learning assessment
+
+### Load necessary libraries, install missing on prompt
+
+```{r}
+#Uncomment and Install packages as required.
+#install.packages("tidyverse")
+#install.packages("caret")
+#install.packages("glmnet")
+#install.packages("ggcorrplot")
+#install.packages("vip")
+#install.packages("ggplot2")
+#install.packages("knitr")
+#install.packages("kableExtra")
+#install.packages("randomForest")
+#install.packages("pROC")
+#Load libraries
+library(tidyverse)
+library(caret)
+library(glmnet)
+library(ggcorrplot)
+library(vip)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+library(randomForest)
+library(pROC)
+```
+
+## Exploratory analysis
+
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+#read csv file into dataframe called data
+data <- read.csv("assignment2024.csv")
+
+#Check for missing data(number of missing observations)
+sum(is.na(data))
+#check data types, dimension and numerical distribution
+str(data)
+#change response variable to factor for better handling
+data$remission <- factor(data$remission)
+
+# Summary of the data showing common statistics
+summary(data)
+```
+
+## Summary plots
+
+#### Histogram of predictor variables(age and 29 biomakers)
+
+```{r}
+# create new dataset without 'remission' for easier handling of plots 
+data_for_plots <- subset(data, select = -c(remission))
+# Generate histograms for each variable except remission
+# Create a 5*6 for variables age and the biomarkers
+par(mfrow = c(5, 6))  
+par(mfrow = c(5, 6), mar = c(4, 4, 1, 1))  
+
+for (i in 1:ncol(data_for_plots)) {
+  hist(data_for_plots[, i], main = colnames(data_for_plots)[i], xlab = "", col = "lightblue", border = "black")
+}
+```
+
+#### Bar chart showing percentage distribution of binary response variable
+
+```{r}
+# Create a bar plot of binary response variable
+# Response renamed as specified in assessment prompt
+ggplot(data, aes(x = factor(remission, labels = c("Active disease", "Remission")), fill = factor(remission))) +
+  geom_bar(stat = "count", show.legend = FALSE) +
+  labs(title = "Bar Plot of Remission Status (Percentage total)", x = "Remission Status", y = "Count") +
+  scale_fill_manual(values = c("red", "darkgreen")) +
+  geom_text(stat = "count", aes(label = paste0(round(after_stat(count / sum(count)) * 100, 1), "%")),
+            vjust = -0.5) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+#### Correlation plot showing correlation between predictors
+
+```{r}
+# Correlation plots showing correlation between predictor variables
+correlation_matrix <- cor(data_for_plots)
+ggcorrplot::ggcorrplot(correlation_matrix) +
+  ggtitle("Correlation plot of predictor variables") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+#### Ttest statistics to calculate difference in mean between remission groups
+
+```{r}
+# Apply function to obtain the normalised differences between response groups for all biomakers
+tstats <- apply(data_for_plots,MARGIN=2,FUN=function(ex){t.test(ex ~ data$remission)$statistic})
+plot(tstats, main = "Tstatistic plot")
+#biomakers that have the largest differences between the groups(top 10)
+
+top_tstats <- rev(sort(abs(tstats)))[1:10]
+
+# Get the corresponding column names
+top_columns <- names(top_tstats)
+```
+
+#### Tstatistic table showing the top 10 with largest difference
+
+```{r}
+# Create a data frame for the output table
+output_table <- data.frame(Column = top_columns, TStatistic = top_tstats)
+
+# Sort the output table by TStatistic in descending order
+output_table <- output_table[order(-output_table$TStatistic), ]
+
+output_table %>%
+  kable("html", align = "c", row.names = FALSE) %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  kableExtra::add_header_above(c("Largest difference between groups" = 2))
+```
+
+#### Data splitting into training and validation sets
+
+```{r}
+# Create indices for training and test data using caret
+# Split data into train and test, 80% for training
+splitIndex <- createDataPartition(data$remission, p = 0.8, list = FALSE)
+train_data <- data[splitIndex, ]
+test_data <- data[-splitIndex, ]
+
+# Prepare the training data
+# exclude the intercept term from the matrix[,-1]
+x_train <- model.matrix(remission ~ ., data = train_data)[, -1]
+y_train <- train_data$remission
+
+# Prepare the test set for validation
+# exclude the intercept term from the matrix[,-1]
+x_test <- model.matrix(remission ~ ., data = test_data)[, -1]
+```
+
+## Regularization (penalised) classification
+
+```{r}
+# Tune alpha and lambda for regularization methods
+# Define the training control crossvalidation
+ctrl <- trainControl(method = "cv", number = 10)
+
+# Create a tuning grid of alpha and lambda values 
+tuning_grid <- expand.grid(
+  alpha = seq(0, 1, by = 0.1),
+  lambda = exp(seq(-4, 2, length = 100))
+)
+# Tune the glmnet model using caret
+model <- train(remission ~ ., data = train_data, method = "glmnet", trControl = ctrl, tuneGrid = tuning_grid)
+
+# Print the optimal alpha and lambda value
+print(model$bestTune)
+plot(model)
+```
+
+#### Fitting and predicting with suggested optimal values
+
+```{r}
+best_alpha <- model$bestTune$alpha
+best_lambda <- model$bestTune$lambda
+print(best_alpha)
+print(best_lambda)
+#best alpha chosen as 0(ridge)
+#fitting model
+ridge_mod <- glmnet(x_train, y_train, alpha = best_alpha, lambda =best_lambda, family = "binomial", standardize = TRUE)
+# Predict on the test set
+predictionsridge <- predict(ridge_mod, newx = x_test, type = "class")
+confusionTestridge <- table(predictionsridge,test_data$remission)
+print(confusionMatrix(confusionTestridge,positive="1"))
+#fit lasso and elastic(using 0.3 as alpha) for comparison
+lasso_mod <- glmnet(x_train, y_train, alpha = 1, lambda =best_lambda, family = "binomial", standardize = TRUE)
+predictionslasso <- predict(lasso_mod, newx = x_test, type = "class")
+confusionTestlasso <- table(predictionslasso,test_data$remission)
+print(confusionMatrix(confusionTestlasso,positive="1"))
+#then elastic
+elastic_mod <- glmnet(x_train, y_train, alpha = 0.3, lambda =best_lambda, family = "binomial", standardize = TRUE)
+predictionselastic <- predict(elastic_mod, newx = x_test, type = "class")
+confusionTestelastic <- table(predictionselastic,test_data$remission)
+print(confusionMatrix(confusionTestelastic,positive="1"))
+```
+
+#### Fitting final model with elastic net and further optimization of lambda with binomial deviance
+
+```{r}
+# set up nfolds cv and specify lambda sequence
+num_folds <- 10
+lambda_sequence <-exp(seq(-4, 2, length = 100))  
+elastic_net_mod <- cv.glmnet(x_train, y_train, alpha = 0.3, lambda = lambda_sequence, family = "binomial", standardize = TRUE, nfolds = num_folds)
+plot(elastic_net_mod, main="lambda optimization")
+# Add a vertical line at the position of the best lambda
+abline(v = log(elastic_net_mod$lambda.min), col = "red", lty = 2)
+# View value for best lambda
+best_lambda <- elastic_net_mod$lambda.min
+cat("Best Lambda:", best_lambda, "\n")
+
+#binomial deviance used to tune lambda
+
+# using the best_lambda to fit the final model
+final_elasticnet_mod <- glmnet(x_train, y_train, alpha = 0.3, lambda = best_lambda, family = "binomial", standardize = TRUE)
+predictions_final <- predict(final_elasticnet_mod, newx = x_test, type = "class")
+
+# print confusion matrix and performance metrics
+confusionTest_final <- table(predictions_final,test_data$remission)
+print(confusionMatrix(confusionTest_final,positive="1"))
+```
+
+#### Filter accuracy, sensitivity, specificicty and kappa values
+
+```{r}
+# create true labels from test_data
+true_labels <- test_data$remission
+conf_matrix <- table(predictions_final, true_labels)
+
+# Extract metrics
+accuracy <- confusionMatrix(conf_matrix)$overall["Accuracy"]
+sensitivity <- confusionMatrix(conf_matrix)$byClass["Sensitivity"]
+specificity <- confusionMatrix(conf_matrix)$byClass["Specificity"]
+kappa <- confusionMatrix(conf_matrix)$overall["Kappa"]
+
+
+# Create a table
+result_table <- data.frame(
+  Metric = c("Accuracy", "Specificity", "Sensitivity", "Kappa"),
+  Value = c(accuracy, sensitivity, specificity, kappa),
+  row.names = NULL
+)
+
+# Print result table
+print(kable(result_table, format = "markdown"))
+
+```
+
+#### AUC ROC calculation
+
+```{r}
+#Set objects to numeric
+true_labels <- as.numeric(as.character(true_labels))
+predictions_final <- as.numeric(as.character(predictions_final))
+roc_curve <- roc(true_labels, predictions_final)
+optimal_threshold <- coords(roc_curve, "best", ret = "threshold")
+plot(roc_curve, main = "ROC Curve", col = "blue", lwd = 2, type = "l")
+# Calculate AUC and print
+auc_value <- round(auc(roc_curve), 2)
+cat("AUC is", auc_value, "\n")
+
+```
+
+#### Variable improtance and coefficient values
+
+```{r}
+# Plot to show magnitude of variable mportance
+vip(final_elasticnet_mod, num_features = ncol(train_data) - 1)
+# Smaller plot to show only important variables
+vip(final_elasticnet_mod, num_features = 18)
+final_elasticnet_mod$beta
+#Show coefficient values
+elastic_coefficients <- as.data.frame(final_elasticnet_mod$beta[, 1]) 
+
+# Add variable names as a column
+elastic_coefficients$Variable <- rownames(elastic_coefficients)
+
+# Create a new data frame with selected columns
+elastic_coefficients <- data.frame(
+  Variable = elastic_coefficients$Variable,
+  Coefficient = elastic_coefficients[, 1],
+  check.names = FALSE
+)
+
+kable(elastic_coefficients, format = "markdown", col.names = c("Variable", "Coefficient"))
+```
+
+## Decision Tree(Random Forest)
+
+#### Fitting a Random Forest model on train_data without tuning to see optimal ntree range
+
+```{r}
+# Fit without tuning
+notuning <- randomForest(
+  formula = remission ~ ., 
+  data = train_data,
+  type = "classification"
+)
+# Plot error rate against number of trees
+plot(notuning, main = "Error Rate vs. Number of Trees", type = "l")
+
+# Add a legend and show optimal ntree value
+legend("topright", legend = colnames(notuning$err.rate), col = 1:ncol(notuning$err.rate), lty = 1, cex = 0.8)
+optimal_ntrees <- which.min(notuning$err.rate[,1])
+
+# Add a vertical line at the optimal number of trees
+abline(v = optimal_ntrees, col = "red", lty = 2)
+
+# Add text indicating the optimal number of trees
+text(x = optimal_ntrees, y = notuning$err.rate[optimal_ntrees, 1], 
+     labels = paste("Optimal ntree =", optimal_ntrees), pos = 1, col = "red")
+# Note, mtry and sampsize not set, results might differ
+# This just gives me a general idea of ntree
+```
+
+#### Grid search to select optimum mtry and sampsize
+
+```{r}
+#Note: This bit would take a while to run
+#Use optimal ntree and then tune mtry and sample size
+#Grid and sequence initialized
+tuning_grid <- expand.grid(
+  sample.fraction = seq(.05, .95, by = .05),
+  mtry  = seq(2, 12, by = 1)
+)
+best_accuracy <- 0
+best_mtry <- NULL
+best_sample_fraction <- NULL
+for (i in 1:nrow(tuning_grid)) {
+  # Get the current combination of parameters
+  current_mtry <- tuning_grid$mtry[i]
+  current_sample_fraction <- tuning_grid$sample.fraction[i]
+  
+  # Training the Random Forest model with the current parameters
+  rf_model <- randomForest(remission ~ ., data = train_data,
+                           mtry = current_mtry,
+                           sampsize = floor(current_sample_fraction * nrow(train_data)),
+                           ntree = optimal_ntrees,
+                           type = "classification")
+  
+  # Make predictions on the test set
+  predictions <- predict(rf_model, newdata = train_data)
+  
+  # Evaluate accuracy
+  accuracy <- sum(predictions == train_data$remission) / length(train_data$remission)
+  
+  # Update best parameters on accuracy
+  if (accuracy > best_accuracy) {
+    best_accuracy <- accuracy
+    best_mtry <- current_mtry
+    best_sample_fraction <- current_sample_fraction
+  }
+}
+
+# Output the best parameters and accuracy
+cat("Best mtry:", best_mtry, "\n")
+cat("Best sample fraction:", best_sample_fraction, "\n")
+cat("Best accuracy:", best_accuracy, "\n")
+```
+
+#### Training final Random Forest Model with optimal parameters and predicting on test data
+
+```{r}
+# Build the final Random Forest model with optimal parameters
+# Split rule set as Gini and type specified as classification
+final_rf_model <- randomForest(
+  remission ~ ., 
+  data = train_data, 
+  ntree = optimal_ntrees,  
+  mtry = best_mtry,  
+  sampsize = floor(best_sample_fraction * nrow(train_data)), 
+  splitrule = "gini",  
+  type = "classification"  
+)
+# Make predictions on test data
+predictionsrf <- predict(final_rf_model, newdata = test_data)
+conf_matrixrf <- table(predictionsrf, test_data$remission)
+print(confusionMatrix(conf_matrixrf,positive="1"))
+```
+
+#### Variable importance plots
+
+```{r}
+#Variable importance based on mean deacrease in gini, shown in first plot, better observed on 2nd.                  
+# Plot Variable Importance
+varImpPlot(final_rf_model)
+#or this
+vip_plot <- vip(final_rf_model, num_features = ncol(train_data) - 1)
+print(vip_plot)
+# See raw values
+mean_decrease_gini <- final_rf_model$importance[, "MeanDecreaseGini"]
+print(mean_decrease_gini)
+```
+
+#### AUC ROC plot and calculation
+
+```{r}
+#Set objests to numeric
+true_labels <- as.numeric(as.character(true_labels))
+predictionsrf <- as.numeric(as.character(predictionsrf))
+roc_curve <- roc(true_labels, predictionsrf)
+optimal_thresholdrf <- coords(roc_curve, "best", ret = "threshold")
+plot(roc_curve, main = "ROC Curve", col = "blue", lwd = 2, type = "l")
+
+# Calculate AUC and print
+auc_valuerf <- round(auc(roc_curve), 2)
+cat("AUC is", auc_valuerf, "\n")
+```
